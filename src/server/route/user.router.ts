@@ -1,8 +1,10 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime';
 import * as trpc from '@trpc/server';
+import { serialize } from 'cookie';
+import { resolve } from 'path';
 import { url } from '../../constants';
 import { createUserOutputSchema, createUserSchema, requestOtpSchema } from '../../schema/user.schema';
-import { encode } from '../../utils/base64';
+import { decode, encode } from '../../utils/base64';
 import { sendLoginEmail } from '../../utils/mailer';
 import { createRouter } from '../createRouter';
 
@@ -11,6 +13,7 @@ export const userRouter = createRouter()
 		input: createUserSchema,
 		async resolve({ ctx, input }) {
 			const { email, name } = input;
+
 			try {
 				const user = await ctx.prisma.user.create({
 					data: {
@@ -18,6 +21,8 @@ export const userRouter = createRouter()
 						name,
 					},
 				});
+
+				return user;
 			} catch (e) {
 				if (e instanceof PrismaClientKnownRequestError) {
 					if (e.code === 'P2002') {
@@ -27,6 +32,7 @@ export const userRouter = createRouter()
 						});
 					}
 				}
+
 				throw new trpc.TRPCError({
 					code: 'INTERNAL_SERVER_ERROR',
 					message: 'Something went wrong',
@@ -40,8 +46,11 @@ export const userRouter = createRouter()
 			const { email, redirect } = input;
 
 			const user = await ctx.prisma.user.findUnique({
-				where: { email },
+				where: {
+					email,
+				},
 			});
+
 			if (!user) {
 				throw new trpc.TRPCError({
 					code: 'NOT_FOUND',
@@ -59,13 +68,56 @@ export const userRouter = createRouter()
 					},
 				},
 			});
-
-			await sendLoginEmail({
+			// send email to user
+			sendLoginEmail({
 				token: encode(`${token.id}:${user.email}`),
-				url: url,
+				url,
 				email: user.email,
 			});
 
 			return true;
 		},
 	});
+// .query('verify-otp', {
+// 	input: verifyOtpSchema,
+// 	async resolve({ input, ctx }) {
+// 		const decoded = decode(input.hash).split(':');
+
+// 		const [id, email] = decoded;
+
+// 		const token = await ctx.prisma.loginToken.findFirst({
+// 			where: {
+// 				id,
+// 				user: {
+// 					email,
+// 				},
+// 			},
+// 			include: {
+// 				user: true,
+// 			},
+// 		});
+
+// 		if (!token) {
+// 			throw new trpc.TRPCError({
+// 				code: 'FORBIDDEN',
+// 				message: 'Invalid token',
+// 			});
+// 		}
+
+// 		const jwt = signJwt({
+// 			email: token.user.email,
+// 			id: token.user.id,
+// 		});
+
+// 		ctx.res.setHeader('Set-Cookie', serialize('token', jwt, { path: '/' }));
+
+// 		return {
+// 			redirect: token.redirect,
+// 		};
+// 	},
+// })
+// .query('me', {
+// 	resolve({ ctx }) {
+// 		return ctx.user;
+// 	},
+// });
